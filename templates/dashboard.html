@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>YouTube Video Downloader</h2>
+    
+    <!-- Download Form -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form id="downloadForm" method="POST">
+                <div class="form-group">
+                    <label for="url">YouTube URL:</label>
+                    <input type="text" class="form-control" id="url" name="url" required>
+                </div>
+                <div class="form-group mt-3" id="formatSelection" style="display: none;">
+                    <label>Select Format:</label>
+                    <div id="formatOptions"></div>
+                </div>
+                <button type="submit" class="btn btn-primary mt-3" id="submitBtn">Get Formats</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Downloads Table -->
+    <div class="card">
+        <div class="card-body">
+            <h3>Your Downloads</h3>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Format</th>
+                            <th>Status</th>
+                            <th>Progress</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for download in downloads %}
+                        <tr id="download-{{ download.id }}">
+                            <td>{{ download.video_title }}</td>
+                            <td>{{ download.format_id }}</td>
+                            <td class="status">{{ download.status }}</td>
+                            <td style="min-width: 200px;">
+                                <div class="progress">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                         role="progressbar" 
+                                         {% if download.status == 'completed' %}
+                                         style="width: 100%"
+                                         aria-valuenow="100"
+                                         {% else %}
+                                         style="width: 0%"
+                                         aria-valuenow="0"
+                                         {% endif %}
+                                         aria-valuemin="0"
+                                         aria-valuemax="100">
+                                        {% if download.status == 'completed' %}100%{% endif %}
+                                    </div>
+                                </div>
+                                <div class="download-info small text-muted mt-1">
+                                    {% if download.error %}
+                                        {{ download.error }}
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                {% if download.status == 'completed' %}
+                                    <a href="{{ url_for('download_file', download_id=download.id) }}" 
+                                       class="btn btn-success btn-sm">
+                                        <i class="fas fa-download"></i> Download
+                                    </a>
+                                {% elif download.status == 'failed' %}
+                                    <button class="btn btn-danger btn-sm" disabled>
+                                        <i class="fas fa-exclamation-circle"></i> Failed
+                                    </button>
+                                {% else %}
+                                    <button class="btn btn-info btn-sm" disabled>
+                                        <i class="fas fa-spinner fa-spin"></i> In Progress
+                                    </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const downloadForm = document.getElementById('downloadForm');
+    const urlInput = document.getElementById('url');
+    const formatSelection = document.getElementById('formatSelection');
+    const formatOptions = document.getElementById('formatOptions');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    function formatBytes(bytes, decimals = 2) {
+        if (!bytes) return '0 B';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+    }
+
+    function formatSpeed(bytesPerSecond) {
+        if (!bytesPerSecond) return '0 B/s';
+        return formatBytes(bytesPerSecond) + '/s';
+    }
+
+    function formatTime(seconds) {
+        if (!seconds) return '00:00';
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    async function getFormats(url) {
+        try {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            
+            const response = await fetch('/get_formats', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ url: url })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            formatOptions.innerHTML = '';
+            data.formats.forEach(format => {
+                const div = document.createElement('div');
+                div.className = 'form-check mb-2';
+                div.innerHTML = `
+                    <input class="form-check-input" type="radio" name="format" 
+                           id="format-${format.format_id}" value="${format.format_id}">
+                    <label class="form-check-label" for="format-${format.format_id}">
+                        ${format.quality} - ${format.filesize_display}
+                        <br>
+                        <small class="text-muted">
+                            Format: ${format.ext.toUpperCase()}, 
+                            Codec: ${format.vcodec}, 
+                            FPS: ${format.fps || 'N/A'}
+                        </small>
+                    </label>
+                `;
+                formatOptions.appendChild(div);
+            });
+            
+            formatSelection.style.display = 'block';
+            submitBtn.innerHTML = 'Download';
+            submitBtn.disabled = false;
+            
+        } catch (error) {
+            console.error('Error:', error);
+            alert(error.message || 'Failed to get formats');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Get Formats';
+        }
+    }
+    
+    downloadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const url = urlInput.value.trim();
+        if (!url) return;
+        
+        const selectedFormat = document.querySelector('input[name="format"]:checked');
+        
+        if (!selectedFormat && submitBtn.innerHTML === 'Download') {
+            alert('Please select a format');
+            return;
+        }
+        
+        if (submitBtn.innerHTML === 'Get Formats') {
+            await getFormats(url);
+        } else {
+            try {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting Download...';
+                
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: url,
+                        format_id: selectedFormat.value
+                    })
+                });
+                
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Download failed');
+                }
+                
+                // Add a new row to the table
+                const downloadsTable = document.querySelector('table tbody');
+                if (downloadsTable) {
+                    const newRow = document.createElement('tr');
+                    newRow.id = `download-${data.download_id}`;
+                    newRow.innerHTML = `
+                        <td>${url}</td>
+                        <td>${selectedFormat.value}</td>
+                        <td class="status">pending</td>
+                        <td style="min-width: 200px;">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" 
+                                     aria-valuenow="0"
+                                     aria-valuemin="0"
+                                     aria-valuemax="100"
+                                     style="width: 0%">
+                                </div>
+                            </div>
+                            <div class="download-info small text-muted mt-1"></div>
+                        </td>
+                        <td>
+                            <button class="btn btn-info btn-sm" disabled>
+                                <i class="fas fa-spinner fa-spin"></i> In Progress
+                            </button>
+                        </td>
+                    `;
+                    downloadsTable.insertBefore(newRow, downloadsTable.firstChild);
+                }
+                
+                // Reset the form
+                urlInput.value = '';
+                formatSelection.style.display = 'none';
+                submitBtn.innerHTML = 'Get Formats';
+                submitBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                alert(error.message || 'Download failed');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Download';
+            }
+        }
+    });
+    
+    async function checkProgress() {
+        const downloadRows = document.querySelectorAll('tr[id^="download-"]');
+        
+        for (const row of downloadRows) {
+            const downloadId = row.id.split('-')[1];
+            const statusCell = row.querySelector('.status');
+            const progressBar = row.querySelector('.progress-bar');
+            const downloadInfo = row.querySelector('.download-info');
+            const actionCell = row.querySelector('td:last-child');
+            
+            if (!statusCell || statusCell.textContent === 'completed' || statusCell.textContent === 'failed') {
+                continue;
+            }
+
+            try {
+                const response = await fetch(`/progress/${downloadId}`);
+                const data = await response.json();
+
+                if (data.status === 'downloading' && data.total_bytes) {
+                    const progress = (data.downloaded_bytes / data.total_bytes) * 100;
+                    const speed = formatSpeed(data.speed);
+                    const eta = formatTime(data.eta);
+                    const downloaded = formatBytes(data.downloaded_bytes);
+                    const total = formatBytes(data.total_bytes);
+
+                    if (progressBar) {
+                        progressBar.style.width = `${progress}%`;
+                        progressBar.setAttribute('aria-valuenow', Math.round(progress));
+                        progressBar.textContent = `${Math.round(progress)}%`;
+                    }
+
+                    if (downloadInfo) {
+                        downloadInfo.textContent = `${downloaded} of ${total} at ${speed} - ETA: ${eta}`;
+                    }
+
+                    statusCell.textContent = 'downloading';
+                } else if (data.status === 'finished' || data.status === 'completed') {
+                    if (progressBar) {
+                        progressBar.style.width = '100%';
+                        progressBar.setAttribute('aria-valuenow', 100);
+                        progressBar.textContent = '100%';
+                        progressBar.classList.remove('progress-bar-animated');
+                    }
+                    if (downloadInfo) {
+                        downloadInfo.textContent = 'Download complete!';
+                    }
+                    statusCell.textContent = 'completed';
+                    
+                    // Update the action button to show download link
+                    if (actionCell) {
+                        actionCell.innerHTML = `
+                            <a href="/download_file/${downloadId}" 
+                               class="btn btn-success btn-sm">
+                                <i class="fas fa-download"></i> Download
+                            </a>
+                        `;
+                    }
+                } else if (data.status === 'error' || data.status === 'failed') {
+                    statusCell.textContent = 'failed';
+                    if (downloadInfo) {
+                        downloadInfo.textContent = data.error || 'Download failed';
+                    }
+                    
+                    // Update the action button to show failed status
+                    if (actionCell) {
+                        actionCell.innerHTML = `
+                            <button class="btn btn-danger btn-sm" disabled>
+                                <i class="fas fa-exclamation-circle"></i> Failed
+                            </button>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error(`Error checking progress for download ${downloadId}:`, error);
+            }
+        }
+
+        // Continue checking progress if there are active downloads
+        const activeDownloads = Array.from(downloadRows).some(row => {
+            const status = row.querySelector('.status').textContent;
+            return status !== 'completed' && status !== 'failed';
+        });
+
+        if (activeDownloads) {
+            setTimeout(checkProgress, 1000);
+        }
+    }
+
+    checkProgress();
+});
+</script>
+{% endblock %}

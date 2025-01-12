@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center">
+        <h1 class="display-4 mb-4">Welcome to YouTube Downloader</h1>
+        <p class="lead mb-4">Download your favorite YouTube videos in various formats</p>
+        {% if current_user.is_authenticated %}
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary btn-lg">Go to Dashboard</a>
+        {% else %}
+            <div class="d-flex justify-content-center gap-3">
+                <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">Login</a>
+                <a href="{{ url_for('register') }}" class="btn btn-outline-primary btn-lg">Register</a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
